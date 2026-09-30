@@ -1,0 +1,414 @@
+// FINORA — Prisma schema
+//
+// Producción: PostgreSQL (Neon, Supabase, Railway, etc.).
+// Desarrollo local: usar Docker:
+//   docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=finora postgres:16-alpine
+//   DATABASE_URL="postgresql://postgres:finora@localhost:5432/finora?schema=public"
+//
+// Si necesitás SQLite para dev rápido (NO recomendado para prod):
+//   1. Copiá este archivo a prisma/schema.sqlite.prisma
+//   2. Cambiá provider a "sqlite" y url a env("DATABASE_URL_SQLITE")
+//   3. Cambiá todos los Decimal a Float (SQLite no soporta NUMERIC nativo)
+//   4. Apuntá DATABASE_URL_SQLITE a un file:
+//
+// Para producción el schema es ESTE, con PostgreSQL.
+//
+// === Decisión sobre tipos monetarios ===
+// Todos los importes monetarios usan Decimal(18, 4):
+//   - 18 dígitos totales, 4 decimales
+//   - Rango: hasta 999.999.999.999,9999 (cubre cualquier patrimonio)
+//   - Evita errores de floating point en sumas y divisiones
+//   - En Postgres se mapea a NUMERIC nativo
+//   - En código JS se wrappea en Prisma.Decimal (decimal.js)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =========================================================
+// USER
+// =========================================================
+model User {
+  id              String   @id @default(cuid())
+  email           String   @unique
+  name            String?
+  passwordHash    String
+  baseCurrency    String   @default("ARS")
+  privacyMode     Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  accounts                Account[]
+  transactions            Transaction[]
+  categories              Category[]
+  investments             Investment[]
+  subscriptions           Subscription[]
+  budgets                 Budget[]
+  debts                   Debt[]
+  recurringTransactions   RecurringTransaction[]
+  netWorthSnapshots       NetWorthSnapshot[]
+  settings                Settings?
+  exchangeRates            ExchangeRate[]
+
+  @@index([email])
+}
+
+// =========================================================
+// ACCOUNT
+// =========================================================
+model Account {
+  id              String   @id @default(cuid())
+  userId          String
+  name            String
+  type            String   // CASH | BANK | WALLET | CREDIT_CARD | BROKER | CRYPTO | OTHER
+  currency        String   // ISO 4217 (ARS, USD, EUR…)
+  initialBalance  Decimal  @default(0) @db.Decimal(18, 4)
+  currentBalance  Decimal  @default(0) @db.Decimal(18, 4)
+  icon            String?
+  color           String?
+  isActive        Boolean  @default(true)
+  isArchived      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user                    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions            Transaction[]           @relation("txAccount")
+  destinationTransactions Transaction[]           @relation("txToAccount")
+  investments                    Investment[]
+  subscriptions                  Subscription[]
+  debts                          Debt[]
+  recurringTransactions          RecurringTransaction[]
+
+  @@index([userId])
+  @@index([userId, isActive])
+  @@index([userId, isArchived])
+}
+
+// =========================================================
+// CATEGORY
+// =========================================================
+model Category {
+  id          String   @id @default(cuid())
+  userId      String
+  name        String
+  type        String   // EXPENSE | INCOME
+  icon        String?
+  color       String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions          Transaction[]
+  subscriptions         Subscription[]
+  budgets               Budget[]
+  recurringTransactions RecurringTransaction[]
+
+  @@unique([userId, name, type])
+  @@index([userId])
+  @@index([userId, type])
+}
+
+// =========================================================
+// TRANSACTION
+// =========================================================
+model Transaction {
+  id                   String   @id @default(cuid())
+  userId               String
+  accountId            String
+  categoryId           String?
+  type                 String   // EXPENSE | INCOME | TRANSFER | INVESTMENT
+  amount               Decimal  @db.Decimal(18, 4)
+  currency             String
+  description          String?
+  date                 DateTime
+  paymentMethod        String?
+  notes                String?
+  destinationAccountId String?
+  exchangeRate         Decimal? @db.Decimal(18, 8)
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account            Account   @relation("txAccount", fields: [accountId], references: [id], onDelete: Cascade)
+  destinationAccount Account?  @relation("txToAccount", fields: [destinationAccountId], references: [id])
+  category           Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([userId])
+  @@index([userId, date])
+  @@index([userId, type])
+  @@index([accountId])
+  @@index([categoryId])
+  @@index([userId, accountId, date])
+}
+
+// =========================================================
+// INVESTMENT
+// =========================================================
+model Investment {
+  id                    String   @id @default(cuid())
+  userId                String
+  accountId             String?
+  name                  String
+  ticker                String?
+  assetType             String   // STOCK | CEDEAR | ETF | CRYPTO | BOND | FUND | FIXED_TERM | CASH | OTHER
+  currency              String
+  quantity              Decimal  @default(0) @db.Decimal(24, 8) // más precisión para fracciones (BTC)
+  averagePurchasePrice  Decimal  @default(0) @db.Decimal(18, 4)
+  currentPrice          Decimal  @default(0) @db.Decimal(18, 4)
+  notes                 String?
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user                  User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account               Account?                @relation(fields: [accountId], references: [id])
+  transactions          InvestmentTransaction[]
+
+  @@index([userId])
+  @@index([userId, assetType])
+}
+
+model InvestmentTransaction {
+  id            String   @id @default(cuid())
+  investmentId  String
+  type          String   // BUY | SELL | DEPOSIT | WITHDRAWAL | DIVIDEND | INTEREST
+  quantity      Decimal  @default(0) @db.Decimal(24, 8)
+  price         Decimal  @default(0) @db.Decimal(18, 4)
+  amount        Decimal  @default(0) @db.Decimal(18, 4)
+  currency      String
+  date          DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  investment    Investment @relation(fields: [investmentId], references: [id], onDelete: Cascade)
+
+  @@index([investmentId])
+  @@index([investmentId, date])
+}
+
+// =========================================================
+// SUBSCRIPTION
+// =========================================================
+model Subscription {
+  id              String   @id @default(cuid())
+  userId          String
+  accountId       String?
+  categoryId      String?
+  name            String
+  amount          Decimal  @db.Decimal(18, 4)
+  currency        String
+  frequency       String   // WEEKLY | MONTHLY | QUARTERLY | YEARLY | CUSTOM
+  customDays      Int?
+  nextBillingDate DateTime
+  status          String   @default("ACTIVE") // ACTIVE | PAUSED | CANCELLED
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account         Account?  @relation(fields: [accountId], references: [id])
+  category        Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([userId, nextBillingDate])
+}
+
+// =========================================================
+// BUDGET
+// =========================================================
+model Budget {
+  id          String   @id @default(cuid())
+  userId      String
+  categoryId  String
+  month       Int
+  year        Int
+  limitAmount Decimal  @db.Decimal(18, 4)
+  currency    String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category    Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, categoryId, month, year])
+  @@index([userId, month, year])
+}
+
+// =========================================================
+// DEBT
+// =========================================================
+model Debt {
+  id              String   @id @default(cuid())
+  userId          String
+  accountId       String?
+  name            String
+  originalAmount  Decimal  @db.Decimal(18, 4)
+  remainingAmount Decimal  @db.Decimal(18, 4)
+  currency        String
+  installments    Int?
+  interestRate    Decimal? @db.Decimal(8, 4)
+  dueDate         DateTime?
+  status          String   @default("ACTIVE") // ACTIVE | PAID | CANCELLED
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account         Account?  @relation(fields: [accountId], references: [id])
+
+  @@index([userId])
+  @@index([userId, status])
+}
+
+// =========================================================
+// RECURRING TRANSACTION
+// =========================================================
+model RecurringTransaction {
+  id              String   @id @default(cuid())
+  userId          String
+  type            String   // EXPENSE | INCOME
+  amount          Decimal  @db.Decimal(18, 4)
+  currency        String
+  frequency       String   // DAILY | WEEKLY | MONTHLY | YEARLY
+  startDate       DateTime
+  nextExecution   DateTime
+  lastExecuted    DateTime?
+  categoryId      String?
+  accountId       String
+  description     String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account         Account   @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category        Category? @relation(fields: [categoryId], references: [id])
+
+  @@index([userId])
+  @@index([userId, active, nextExecution])
+}
+
+// =========================================================
+// NET WORTH SNAPSHOT
+// =========================================================
+model NetWorthSnapshot {
+  id            String   @id @default(cuid())
+  userId        String
+  date          DateTime
+  totalAssets   Decimal  @db.Decimal(18, 4)
+  totalLiab     Decimal  @db.Decimal(18, 4)
+  netWorth      Decimal  @db.Decimal(18, 4)
+  currency      String
+  createdAt     DateTime @default(now())
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, date])
+}
+
+// =========================================================
+// SETTINGS
+// =========================================================
+model Settings {
+  id                    String   @id @default(cuid())
+  userId                String   @unique
+  theme                 String   @default("dark")
+  baseCurrency          String   @default("ARS")
+  privacyModeDefault    Boolean  @default(false)
+  savingsGoalPercent    Decimal? @db.Decimal(5, 2)
+  notificationsEnabled  Boolean  @default(true)
+  biometricEnabled      Boolean  @default(false)
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// =========================================================
+// EXCHANGE RATE
+// =========================================================
+model ExchangeRate {
+  id          String   @id @default(cuid())
+  userId      String
+  from        String
+  to          String
+  rate        Decimal  @db.Decimal(18, 8)
+  date        DateTime @default(now())
+  source      String   @default("MANUAL") // MANUAL | API | SEED
+
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, from, to, date])
+}
+
+// =========================================================
+// LOGIN ATTEMPT (rate limiting)
+// =========================================================
+model LoginAttempt {
+  id         String   @id @default(cuid())
+  email      String   // normalizado lowercase
+  ip         String?
+  success    Boolean
+  createdAt  DateTime @default(now())
+
+  @@index([email, createdAt])
+  @@index([ip, createdAt])
+}
+
+// =========================================================
+// SYNC EVENT — Transactional Outbox (DB → Obsidian Vault)
+// =========================================================
+//
+// Cada mutación financiera (Transaction, Account, Investment, etc.)
+// crea un SyncEvent en la MISMA transacción PostgreSQL que modifica la entidad.
+//
+// Esto garantiza:
+//  - Si la entidad se guarda, el evento también (atómico)
+//  - El worker puede reprocesar eventos fallidos sin perder el estado
+//  - El Vault se reconstruye íntegramente desde los eventos
+//
+// Estados:
+//  PENDING    - esperando ser procesado por el worker
+//  PROCESSING - el worker lo está escribiendo (lock optimista)
+//  COMPLETED  - escrito correctamente en Vault
+//  FAILED     - reintentar más tarde (con backoff) hasta MAX_ATTEMPTS
+model SyncEvent {
+  id           String   @id @default(cuid())
+  userId       String
+  entityType   String   // Transaction | Account | Investment | InvestmentTransaction | Subscription | Budget | Debt | NetWorthSnapshot
+  entityId     String
+  operation    String   // CREATE | UPDATE | DELETE
+  payload      Json     // Snapshot completo de la entidad al momento del evento
+  recordVersion Int     @default(1) // Versión del registro (incrementa por cambio)
+  status       String   @default("PENDING")
+  attempts     Int      @default(0)
+  lastError    String?
+  createdAt    DateTime @default(now())
+  processedAt  DateTime?
+
+  @@index([status, createdAt])
+  @@index([userId, entityType, entityId])
+  @@index([userId, status, createdAt])
+}
+
+// =========================================================
+// SYNC SNAPSHOT — Estado actual del sync engine (para UI /sistema)
+// =========================================================
+model SyncSnapshot {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  lastVaultSync   DateTime?
+  lastVaultError  String?
+  pendingCount    Int      @default(0)
+  failedCount     Int      @default(0)
+  totalSynced     Int      @default(0)
+  vaultPath       String?  // snapshot del path configurado (sin secretos)
+  workerEnabled   Boolean  @default(true)
+  updatedAt       DateTime @updatedAt
+}

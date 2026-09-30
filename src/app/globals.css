@@ -1,0 +1,104 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --bg-app: #111317;
+  }
+  html,
+  body {
+    width: 100vw;
+    margin: 0;
+    padding: 0;
+    background-color: #111317;
+  }
+  body {
+    overscroll-behavior: none;
+    -webkit-tap-highlight-color: transparent;
+    font-feature-settings: "ss01", "ss02", "cv11";
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  .pb-safe {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  .pt-safe {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+  main > :first-child {
+    margin-top: 0 !important;
+  }
+  main > :last-child {
+    margin-bottom: 0 !important;
+  }
+  /* Hide scrollbars on horizontal chips carousels */
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  /* Numeric tabular alignment for money */
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Safe area for fixed bottom nav */
+  nav.fixed.bottom-0 {
+    padding-bottom: max(env(safe-area-inset-bottom), 0px);
+  }
+  /* Material Symbols rendering */
+  .material-symbols-outlined {
+    font-family: "Material Symbols Outlined";
+    font-weight: normal;
+    font-style: normal;
+    line-height: 1;
+    letter-spacing: normal;
+    text-transform: none;
+    display: inline-block;
+    white-space: nowrap;
+    word-wrap: normal;
+    direction: ltr;
+    -webkit-font-feature-settings: "liga";
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Prevent body scroll when modal open */
+  body.no-scroll {
+    overflow: hidden;
+  }
+  /* Skeleton shimmer */
+  @keyframes shimmer {
+    0% {
+      background-position: -200% 0;
+    }
+    100% {
+      background-position: 200% 0;
+    }
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 25%,
+      rgba(255, 255, 255, 0.08) 37%,
+      rgba(255, 255, 255, 0.04) 63%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  /* Touch manipulation */
+  .touch-manipulation {
+    touch-action: manipulation;
+  }
+}
+
+::-webkit-scrollbar {
+  display: none;
+}
+
+::selection {
+  background-color: rgba(37, 164, 117, 0.45);
+  color: inherit;
+}
