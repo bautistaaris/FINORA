@@ -25,7 +25,10 @@
     "vault:restore:dry": "tsx scripts/vault-restore.ts --dry-run",
     "vault:integrity": "tsx scripts/vault-integrity.ts",
     "backup:pg": "tsx scripts/backup-pg.ts",
+    "backup:verify": "tsx scripts/backup-verify.ts",
     "restore:pg": "tsx scripts/restore-pg.ts",
+    "obsidian:import": "tsx scripts/obsidian-import.ts",
+    "obsidian:reports": "tsx scripts/generate-reports.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

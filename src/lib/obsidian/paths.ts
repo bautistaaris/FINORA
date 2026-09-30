@@ -60,9 +60,13 @@ export function slug(input: string, maxLength = 40): string {
 /**
  * Sufijo corto del UUID para nombres de archivo (8 chars).
  * NO usar como identificador — sólo para evitar colisiones en el filesystem.
+ * Sanitiza caracteres que podrían causar path traversal (../, \, etc).
  */
 export function shortId(id: string, length = 8): string {
-  return id.replace(/-/g, "").slice(0, length).toLowerCase();
+  return id
+    .replace(/[^a-zA-Z0-9]/g, "") // sólo alfanumérico
+    .slice(0, length)
+    .toLowerCase();
 }
 
 /**

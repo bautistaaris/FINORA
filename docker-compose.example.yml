@@ -1,0 +1,104 @@
+# ============================================================
+# FINORA — docker-compose.example.yml
+# ============================================================
+# Uso:
+#   1. cp docker-compose.example.yml docker-compose.yml
+#   2. cp .env.example .env  y completar variables
+#   3. docker compose up -d
+#
+# IMPORTANTE:
+#  - Este compose es un EJEMPLO. Hermes puede adaptarlo.
+#  - Los volúmenes (/vault, /backups) deben montarse desde paths del host.
+#  - Postgres NO expone puerto 5432 al host (sólo en la red interna).
+#  - FINORA sólo expone puerto 3000 dentro de la red interna
+#    (Cloudflare Tunnel lo expone afuera).
+# ============================================================
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: finora-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: finora_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_DB: finora
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=C"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finora_app -d finora"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - finora-net
+    # NO expose ports: postgres NO debe ser accesible desde el host
+
+  finora:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finora-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://finora_app:${POSTGRES_PASSWORD}@postgres:5432/finora?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      NODE_ENV: production
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      OBSIDIAN_VAULT_PATH: /vault
+      FINORA_BACKUP_PATH: /backups
+      FINORA_BOOTSTRAP_ENABLED: ${FINORA_BOOTSTRAP_ENABLED:-false}
+      FINORA_BOOTSTRAP_EMAIL: ${FINORA_BOOTSTRAP_EMAIL:-}
+      FINORA_BOOTSTRAP_PASSWORD: ${FINORA_BOOTSTRAP_PASSWORD:-}
+      NEXT_PUBLIC_BASE_CURRENCY: ${NEXT_PUBLIC_BASE_CURRENCY:-ARS}
+      PG_DUMP_PATH: /usr/bin/pg_dump
+      PG_RESTORE_PATH: /usr/bin/pg_restore
+    volumes:
+      - ${OBSIDIAN_VAULT_HOST_PATH:-/path/to/vault}:/vault:rw
+      - ${FINORA_BACKUP_HOST_PATH:-/path/to/backups}:/backups:rw
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --tries=1 --spider http://localhost:3000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - finora-net
+    # NO expose 3000 directamente: usar Cloudflare Tunnel
+
+  finora-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: finora-sync-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      finora:
+        condition: service_started
+    command: ["npx", "tsx", "scripts/sync-worker.ts"]
+    environment:
+      DATABASE_URL: postgresql://finora_app:${POSTGRES_PASSWORD}@postgres:5432/finora?schema=public
+      AUTH_SECRET: ${AUTH_SECRET:?set AUTH_SECRET}
+      OBSIDIAN_VAULT_PATH: /vault
+      TZ: ${TZ:-America/Argentina/Buenos_Aires}
+      SYNC_INTERVAL_MS: ${SYNC_INTERVAL_MS:-5000}
+      SYNC_BATCH_SIZE: ${SYNC_BATCH_SIZE:-50}
+    volumes:
+      - ${OBSIDIAN_VAULT_HOST_PATH:-/path/to/vault}:/vault:rw
+    networks:
+      - finora-net
+
+volumes:
+  postgres-data:
+    driver: local
+
+networks:
+  finora-net:
+    driver: bridge
